@@ -1,0 +1,15 @@
+# Virtualenv -- recreated by ./install.sh (or automatically by ./run.sh) from
+# requirements.txt. A committed venv contains absolute symlinks and compiled
+# binaries, so it is not portable to another machine anyway.
+.venv/
+venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Editor / OS noise
+*.swp
+*~
+.DS_Store

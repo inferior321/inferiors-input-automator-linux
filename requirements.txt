@@ -1,0 +1,8 @@
+# InFeRiOr's Input Automator - Linux port
+#
+# tkinter is NOT listed here: it ships with CPython and is provided on Mint by
+# the system package `python3-tk`. The venv inherits it from the base
+# interpreter, so no pip install is needed (or possible) for it.
+
+evdev==1.9.3          # virtual keyboard/mouse via /dev/uinput
+python-xlib==0.33     # XWarpPointer, pointer grab, crosshair cursor

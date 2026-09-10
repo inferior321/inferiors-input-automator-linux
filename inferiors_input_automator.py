@@ -2,17 +2,23 @@
 """
 InFeRiOr's Input Automator v3.5.1 -- Linux port of the AutoHotkey v2 original.
 
-15 General + 15 Position (First) + 15 Position (Second) + 15 Position (Third)
+15 General + 15 Repeat (First) + 15 Repeat (Second) + 15 Repeat (Third)
 timers across four scrollable tabs. All settings adjustable in real time
 without restarting.
+
+The Repeat tabs were called "Position Timers" in the AHK original. They are
+named for the fixed interval they fire on rather than for a click position,
+because the position is now optional: a row left at the 0,0 default clicks
+wherever the pointer already is.
 
 Layout constants below are copied verbatim from the AHK script so every timer
 control sits at its original coordinate. Two things differ:
 
-  * Width. The four full-length tab labels render 444px wide at DejaVu Sans 9,
-    so the tab control is 448px and the window 468px, instead of 365/385.
-    Every control inside the tabs keeps its original x/y.
-  * The bottom block (status line, START/RESET, footers) spans the full 448px
+  * Width. The four tab labels render 432px wide at DejaVu Sans 9, so the tab
+    control is 432px and the window 452px, instead of 365/385. The tab strip
+    therefore ends flush with the notebook's right edge. Every control inside
+    the tabs keeps its original x/y.
+  * The bottom block (status line, START/RESET, footers) spans the full 432px
     content width rather than the original 365px, so it stays balanced under
     the wider tab strip. Y coordinates and heights are unchanged.
 
@@ -27,6 +33,11 @@ Deliberate deviations from the AHK original (all agreed up front):
      spot cannot land a stray click in the app underneath.
   4. Scrolling clips partially-visible rows instead of hiding them outright,
      and there is a scrollbar. The original is wheel-only with pop-in.
+  5. A Repeat-tab position of 0,0 means "click at the current cursor" instead
+     of "skip this timer". The pointer is read live, so a row inherits the
+     spot an earlier row in the same set warped to. See run_repeat_timer_set().
+  6. The "Get Pos" button becomes "Clear" once a position is captured, so a
+     row can be returned to cursor-following without the global RESET.
 Everything else -- timings, spacing, run semantics, Hold=0 behaviour, interval
 measurement -- matches the original exactly.
 """
@@ -47,31 +58,34 @@ import input_backend as ib
 
 TIMERS = {
     "numBasic": 15,
-    "numPosition1": 15,
-    "numPosition2": 15,
-    "numPosition3": 15,
+    "numRepeat1": 15,
+    "numRepeat2": 15,
+    "numRepeat3": 15,
     "loopInterval": 50,   # ms between main loop ticks
 }
-TOTAL_TIMERS = (TIMERS["numBasic"] + TIMERS["numPosition1"]
-                + TIMERS["numPosition2"] + TIMERS["numPosition3"])
+TOTAL_TIMERS = (TIMERS["numBasic"] + TIMERS["numRepeat1"]
+                + TIMERS["numRepeat2"] + TIMERS["numRepeat3"])
 NUM_TABS = 4
 
-# Window width widened 385 -> 468 purely so the tab strip fits; height and all
+# Window width widened 385 -> 452 purely so the tab strip fits; height and all
 # inner timer coordinates are unchanged.
 #
-# 468 is measured, not estimated: the four rendered tabs occupy exactly 444px
-# at DejaVu Sans 9 (probed with Notebook.index("@x,y")), so the notebook needs
-# 448px and the window 10 + 448 + 10.
-WINDOW = {"width": 468, "height": 707, "marginX": 10}
+# 452 is measured, not estimated: probing Notebook.index("@x,y") across an
+# over-wide notebook puts the four rendered tabs at x 0..431 at DejaVu Sans 9
+# (102 + 110 + 110 + 110), so the notebook is exactly 432px and the window
+# 10 + 432 + 10. Sizing the notebook to the tab strip is what makes the last
+# tab end flush with the window's right margin instead of leaving a gap.
+WINDOW = {"width": 452, "height": 707, "marginX": 10}
 # Full-width band used by the header, status line, buttons and footers.
-WINDOW["contentWidth"] = WINDOW["width"] - 2 * WINDOW["marginX"]   # 448
+WINDOW["contentWidth"] = WINDOW["width"] - 2 * WINDOW["marginX"]   # 432
 
 HEADER = {"y": 10, "height": 30}
 
 TAB_LAYOUT = {
     "x": 10,
     "y": 42,
-    "width": 448,        # was 365 in AHK; widened to fit the four tab labels
+    "width": 432,        # was 365 in AHK; widened to fit the four tab labels
+                         # exactly, so the strip ends flush on the right
     "height": 500,
     "contentTop": 72,
     "contentBottom": 532,
@@ -92,12 +106,13 @@ LAYOUT = {
 }
 
 GEN_SPACING = {"afterHeader": 28, "afterKey": 28, "afterClick": 35, "afterWait": 49}
-POS_SPACING = {"afterHeader": 23, "afterKey": 23, "afterClick": 28,
-               "afterWait": 28, "afterPos": 32}
+REPEAT_SPACING = {"afterHeader": 23, "afterKey": 23, "afterClick": 28,
+                  "afterWait": 28, "afterPos": 32}
 
 INTERVAL_LAYOUT = {"labelW": 190, "editW": 85, "after": 35}
 
-POS_BTN = {"x": 298, "w": 60, "h": 24, "yOffset": -2}
+POS_BTN = {"x": 298, "w": 60, "h": 24, "yOffset": -2,
+           "getText": "Get Pos", "clearText": "Clear"}
 MODE_DDL = {"x": 195, "w": 72, "yOffset": -2}
 
 MOUSE_BTN = {
@@ -199,8 +214,9 @@ class Timer:
             self.cached_position = self.pos_var.get()
 
 
-class PositionSet:
-    """Port of CreatePositionSet."""
+class RepeatSet:
+    """Port of CreatePositionSet. Named "repeat" here because what defines
+    these sets is the fixed interval they fire on, not the click position."""
 
     def __init__(self):
         self.timers = []
@@ -346,10 +362,10 @@ class InputAutomator:
         self.stop_event = threading.Event()
         self.stop_event.set()          # set == not running
         self.worker = None
-        self.last_position_run = [0.0, 0.0, 0.0]
+        self.last_repeat_run = [0.0, 0.0, 0.0]
 
         self.general_timers = []
-        self.position_sets = [PositionSet(), PositionSet(), PositionSet()]
+        self.repeat_sets = [RepeatSet(), RepeatSet(), RepeatSet()]
         self.scroll_tabs = []
 
         self.tooltip = Tooltip(root)
@@ -429,8 +445,8 @@ class InputAutomator:
         self.notebook = ttk.Notebook(root)
         self.notebook.place(x=TAB_LAYOUT["x"], y=TAB_LAYOUT["y"],
                             width=TAB_LAYOUT["width"], height=TAB_LAYOUT["height"])
-        for title in ("General Timers", "Position Timers 1",
-                      "Position Timers 2", "Position Timers 3"):
+        for title in ("General Timers", "Repeat Timers 1",
+                      "Repeat Timers 2", "Repeat Timers 3"):
             self.notebook.add(tk.Frame(self.notebook), text=title)
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -453,10 +469,10 @@ class InputAutomator:
                                         self.general_timers)
         self.scroll_tabs[0].set_content_height(end_y - TAB_LAYOUT["contentTop"])
 
-        # --- Tabs 2-4: Position timers ---
+        # --- Tabs 2-4: Repeat timers ---
         for set_index in range(3):
-            self._build_position_tab(set_index + 1, set_index,
-                                     TIMERS["numPosition%d" % (set_index + 1)])
+            self._build_repeat_tab(set_index + 1, set_index,
+                                   TIMERS["numRepeat%d" % (set_index + 1)])
 
         for st in self.scroll_tabs:
             st.bind_wheel_recursive(st.inner)
@@ -490,14 +506,15 @@ class InputAutomator:
                     'Key Name: + = combo | "text" = type verbatim', anchor="center")
         self._label(root, WINDOW["marginX"], BOTTOM_UI["footerLine2Y"],
                     WINDOW["contentWidth"],
-                    "Each position tab has its own execution interval.",
+                    "Each Repeat tab has its own interval. "
+                    "Position 0,0 = click at cursor.",
                     color=COLORS["red"], anchor="center")
 
         self._on_tab_changed()
 
-    def _build_position_tab(self, tab_index, set_index, num_timers):
+    def _build_repeat_tab(self, tab_index, set_index, num_timers):
         """Port of BuildPositionTab."""
-        pos_set = self.position_sets[set_index]
+        repeat_set = self.repeat_sets[set_index]
         parent = self.scroll_tabs[tab_index].inner
         _, canvas_y = self.canvas_origin
         canvas_x = self.canvas_origin[0]
@@ -509,27 +526,27 @@ class InputAutomator:
         self._label(parent, LAYOUT["sectionHeaderX"] - canvas_x,
                     content_y - canvas_y, INTERVAL_LAYOUT["labelW"],
                     "Execution Interval (ms):", color=COLORS["red"], bold=True)
-        pos_set.seconds_var = tk.StringVar(value=DEFAULTS["seconds"])
+        repeat_set.seconds_var = tk.StringVar(value=DEFAULTS["seconds"])
         self._number_entry(parent, LAYOUT["editLeft"] - canvas_x,
                            content_y - 3 - canvas_y, LAYOUT["editWidth"],
-                           pos_set.seconds_var)
-        pos_set.cached_interval_ms = int(DEFAULTS["seconds"])
+                           repeat_set.seconds_var)
+        repeat_set.cached_interval_ms = int(DEFAULTS["seconds"])
 
-        def on_interval_change(*_a, _s=pos_set):
+        def on_interval_change(*_a, _s=repeat_set):
             val = _s.seconds_var.get()
             _s.cached_interval_ms = 0 if val == "" else int(val)
 
-        pos_set.seconds_var.trace_add("write", on_interval_change)
+        repeat_set.seconds_var.trace_add("write", on_interval_change)
         content_y += INTERVAL_LAYOUT["after"]
 
         end_y = self._create_timer_rows(tab_index, content_y, num_timers,
-                                        "Position", POS_SPACING, pos_set.timers,
-                                        pos_set=pos_set)
+                                        "Repeat", REPEAT_SPACING,
+                                        repeat_set.timers, repeat_set=repeat_set)
         self.scroll_tabs[tab_index].set_content_height(
             end_y - TAB_LAYOUT["contentTop"])
 
     def _create_timer_rows(self, tab_index, start_y, num_timers, timer_type,
-                           spacing, timer_array, pos_set=None):
+                           spacing, timer_array, repeat_set=None):
         """Port of CreateTimerRows."""
         parent = self.scroll_tabs[tab_index].inner
         cx, cy = self.canvas_origin
@@ -568,10 +585,10 @@ class InputAutomator:
             t.wait_var.trace_add("write", t.refresh_cache)
             content_y += spacing["afterWait"]
 
-            # Position row (position tabs only)
-            if pos_set is not None:
+            # Position row (repeat tabs only)
+            if repeat_set is not None:
                 content_y = self._add_position_row(parent, content_y, i, t,
-                                                   pos_set)
+                                                   repeat_set)
 
             t.refresh_cache()
             timer_array.append(t)
@@ -612,7 +629,7 @@ class InputAutomator:
         t._slot_place = {"x": LAYOUT["editLeft"] - cx, "y": key_row_y - cy,
                          "width": LAYOUT["editWidth"], "height": 21}
 
-    def _add_position_row(self, parent, content_y, timer_index, t, pos_set):
+    def _add_position_row(self, parent, content_y, timer_index, t, repeat_set):
         """Port of AddPositionRow."""
         cx, cy = self.canvas_origin
 
@@ -624,16 +641,20 @@ class InputAutomator:
                                       content_y - cy, LAYOUT["editWidth"],
                                       t.pos_var, readonly=True)
         t.pos_var.trace_add("write", t.refresh_cache)
-        pos_set.pos_edits.append(t.pos_edit)
+        repeat_set.pos_edits.append(t.pos_edit)
 
-        set_index = self.position_sets.index(pos_set)
+        set_index = self.repeat_sets.index(repeat_set)
         t.pos_button = tk.Button(
-            parent, text="Get Pos", font=self.font_default,
-            command=lambda _s=set_index, _i=timer_index - 1: self.get_position(_s, _i))
+            parent, text=POS_BTN["getText"], font=self.font_default,
+            command=lambda _s=set_index, _i=timer_index - 1:
+                self.toggle_position(_s, _i))
+        # One trace keeps the button label honest no matter what moved the
+        # field: a capture, a Clear, or the global RESET.
+        t.pos_var.trace_add("write", lambda *_a, _t=t: self._sync_pos_button(_t))
         t.pos_button.place(x=POS_BTN["x"] - cx,
                            y=content_y + POS_BTN["yOffset"] - cy,
                            width=POS_BTN["w"], height=POS_BTN["h"])
-        pos_set.pos_buttons.append(t.pos_button)
+        repeat_set.pos_buttons.append(t.pos_button)
 
         t._pos_place = {
             "label": {"x": LAYOUT["contentLeft"] - cx, "y": content_y - cy,
@@ -645,7 +666,7 @@ class InputAutomator:
                        "width": POS_BTN["w"], "height": POS_BTN["h"]},
         }
 
-        return content_y + POS_SPACING["afterPos"]
+        return content_y + REPEAT_SPACING["afterPos"]
 
     # ---------- mode switching ----------
 
@@ -681,6 +702,30 @@ class InputAutomator:
 
     # ---------- position capture ----------
 
+    def _sync_pos_button(self, t):
+        """The button is a two-state control: it captures a position while the
+        field is unset, and clears it back to the default once one is set."""
+        if t.pos_button is None:
+            return
+        unset = (t.pos_var.get() == DEFAULTS["position"])
+        t.pos_button.configure(
+            text=POS_BTN["getText"] if unset else POS_BTN["clearText"])
+
+    def toggle_position(self, set_index, timer_index):
+        """Capture a position, or clear one that was already captured.
+
+        Clearing matters now that 0,0 means "click at the cursor" -- without it
+        the only way back to that behaviour would be the global RESET, which
+        wipes every timer in the app.
+        """
+        t = self.repeat_sets[set_index].timers[timer_index]
+        if t.pos_var.get() != DEFAULTS["position"]:
+            t.pos_var.set(DEFAULTS["position"])
+            t.refresh_cache()
+            self.tooltip.show("Position cleared - clicks at the cursor.")
+            return
+        self.get_position(set_index, timer_index)
+
     def get_position(self, set_index, timer_index):
         """Port of GetPosition, using an X pointer grab instead of
         SetSystemCursor + KeyWait. The confirming click is swallowed."""
@@ -711,7 +756,7 @@ class InputAutomator:
             return
 
         x, y = result
-        t = self.position_sets[set_index].timers[timer_index]
+        t = self.repeat_sets[set_index].timers[timer_index]
         t.pos_var.set("%d,%d" % (x, y))
         t.refresh_cache()
         self.tooltip.show("Position captured: %d,%d" % (x, y))
@@ -735,7 +780,7 @@ class InputAutomator:
         for t in self.general_timers:
             if not self._validate_timer_key(t):
                 return False
-        for ps in self.position_sets:
+        for ps in self.repeat_sets:
             for t in ps.timers:
                 if not self._validate_timer_key(t):
                     return False
@@ -761,7 +806,7 @@ class InputAutomator:
             self.is_running = True
             self.stop_event.clear()
             start = now_ms()
-            self.last_position_run = [start, start, start]
+            self.last_repeat_run = [start, start, start]
             self.start_stop_btn.configure(text="STOP (F6)")
             self.status_label.configure(text="Status: Running",
                                         foreground=COLORS["green"])
@@ -773,14 +818,14 @@ class InputAutomator:
         if self.is_running:
             self.toggle_script()
 
-        for ps in self.position_sets:
+        for ps in self.repeat_sets:
             ps.seconds_var.set(DEFAULTS["seconds"])
             ps.cached_interval_ms = int(DEFAULTS["seconds"])
 
         for t in self.general_timers:
             self._reset_timer(t)
 
-        for ps in self.position_sets:
+        for ps in self.repeat_sets:
             for t in ps.timers:
                 self._reset_timer(t)
                 t.pos_var.set(DEFAULTS["position"])
@@ -894,7 +939,7 @@ class InputAutomator:
         self.backend.warp(x, y)
         time.sleep(CLICK_TIMING["cursorReturn2"] / 1000.0)
 
-    def run_position_timer_set(self, timers):
+    def run_repeat_timer_set(self, timers):
         """Port of RunPositionTimerSet."""
         for t in timers:
             if self.stop_event.is_set():
@@ -919,16 +964,23 @@ class InputAutomator:
                         return False
                 continue
 
-            # Click mode: skip positions still at the unconfigured default.
-            if position_str == "0,0":
-                continue
-            parts = position_str.split(",")
-            if len(parts) != 2:
-                continue
-            try:
-                x_pos, y_pos = int(parts[0]), int(parts[1])
-            except ValueError:
-                continue
+            # Click mode. A position left at the 0,0 default means "wherever
+            # the pointer already is" rather than "skip me": the timer clicks
+            # in place. Note this reads the LIVE pointer, so an earlier timer
+            # in the same set that warped the cursor to an explicit position
+            # leaves it there for this one -- "click again right here" without
+            # repeating the coordinates.
+            use_cursor = (position_str == "0,0")
+            if use_cursor:
+                x_pos, y_pos = self.backend.get_pointer()
+            else:
+                parts = position_str.split(",")
+                if len(parts) != 2:
+                    continue
+                try:
+                    x_pos, y_pos = int(parts[0]), int(parts[1])
+                except ValueError:
+                    continue
 
             if click_duration > 0:
                 if not self.click_at_position(x_pos, y_pos, click_duration,
@@ -936,9 +988,10 @@ class InputAutomator:
                     return False
                 if not self.interruptible_sleep(CLICK_TIMING["postDelay"]):
                     return False
-            else:
+            elif not use_cursor:
                 # Hold=0 in Click mode means "move there, don't click" -- the
-                # original behaviour, deliberately preserved.
+                # original behaviour, deliberately preserved. With no position
+                # set there is nowhere to move to, so this row just waits.
                 self.backend.warp(x_pos, y_pos)
 
             if wait_duration > 0:
@@ -946,7 +999,7 @@ class InputAutomator:
                     return False
         return True
 
-    def try_run_position_sets(self):
+    def try_run_repeat_sets(self):
         """Port of TryRunPositionSets.
 
         The interval is measured from the END of the previous run, exactly as
@@ -955,13 +1008,13 @@ class InputAutomator:
         current_time = now_ms()
         any_ran = False
 
-        for idx, ps in enumerate(self.position_sets):
+        for idx, ps in enumerate(self.repeat_sets):
             target_ms = ps.cached_interval_ms
             is_due = (target_ms > 0
-                      and current_time - self.last_position_run[idx] >= target_ms)
+                      and current_time - self.last_repeat_run[idx] >= target_ms)
             if is_due and not self.stop_event.is_set():
-                self.run_position_timer_set(ps.timers)
-                self.last_position_run[idx] = now_ms()
+                self.run_repeat_timer_set(ps.timers)
+                self.last_repeat_run[idx] = now_ms()
                 any_ran = True
 
         return any_ran
@@ -1005,7 +1058,7 @@ class InputAutomator:
 
     def _main_loop(self):
         """Port of MainClickLoop, driven as a worker thread rather than
-        SetTimer. Priority order is unchanged: position sets beat general
+        SetTimer. Priority order is unchanged: repeat sets beat general
         timers, and general timers are skipped on any tick where a set ran."""
         interval = TIMERS["loopInterval"] / 1000.0
         while not self.stop_event.is_set():
@@ -1013,12 +1066,12 @@ class InputAutomator:
 
             saved_x, saved_y = self.backend.get_pointer()
 
-            any_position_ran = self.try_run_position_sets()
+            any_repeat_ran = self.try_run_repeat_sets()
 
-            if any_position_ran and not self.stop_event.is_set():
+            if any_repeat_ran and not self.stop_event.is_set():
                 self.return_cursor(saved_x, saved_y)
 
-            if not any_position_ran and not self.stop_event.is_set():
+            if not any_repeat_ran and not self.stop_event.is_set():
                 self.run_general_timers()
 
             elapsed = time.monotonic() - tick_start

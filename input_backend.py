@@ -45,7 +45,7 @@ DEVICE_SETTLE_SECONDS = 0.35
 # labelled A on a US layout, the same key AHK's Send("{a}") would hit.
 #
 # Verbatim text typing ("quoted literals") deliberately does NOT use this
-# table -- see type_text(), which resolves characters through the live X
+# table -- see char_keystroke(), which resolves characters through the live X
 # keyboard mapping so it stays correct on non-US layouts.
 
 AHK_KEY_MAP = {}
@@ -268,47 +268,45 @@ class InputBackend:
             return MOUSE_BUTTON_KEYS[low]
         return AHK_KEY_MAP.get(low)
 
-    def type_text(self, text):
-        """Type a string verbatim -- the port of AHK's SendText.
+    def char_keystroke(self, ch):
+        """Return the keystroke that types `ch` as written: (evdev_code,
+        needs_shift), or None if the current layout cannot produce it.
 
         Characters are resolved through the *live X keyboard mapping* rather
-        than a hardcoded US table, so this stays correct on any layout. Each
-        character is looked up to find its keycode and whether Shift is
-        required to reach it.
-        """
-        for ch in text:
-            resolved = self._char_to_keycode(ch)
-            if resolved is None:
-                continue
-            code, needs_shift = resolved
-            if needs_shift:
-                self._emit_key(e.KEY_LEFTSHIFT, 1)
-            self._emit_key(code, 1)
-            self._emit_key(code, 0)
-            if needs_shift:
-                self._emit_key(e.KEY_LEFTSHIFT, 0)
+        than a hardcoded US table, so this stays correct on any layout.
 
-    def char_down(self, ch):
-        """Press the key that produces `ch` (with Shift if the layout needs
-        it), leaving it held. Used for holding a character that has no AHK key
-        name of its own, such as a bare '+'."""
+        Caps Lock is compensated for letters: with it on, the layout already
+        capitalises, so the Shift decision is inverted -- otherwise "Hello"
+        would come out as "hELLO". Digits and punctuation ignore Caps Lock and
+        are left alone. The state is read per character, so toggling Caps Lock
+        mid-sentence is handled too.
+
+        Pacing is deliberately NOT done here: the engine presses and releases
+        each keystroke itself, so it can hold, space and interrupt them.
+        """
         resolved = self._char_to_keycode(ch)
         if resolved is None:
-            return False
+            return None
         code, needs_shift = resolved
+        if ch.lower() != ch.upper() and self._caps_lock_on():
+            needs_shift = not needs_shift
+        return code, needs_shift
+
+    def press_keystroke(self, stroke):
+        code, needs_shift = stroke
         if needs_shift:
             self._emit_key(e.KEY_LEFTSHIFT, 1)
         self._emit_key(code, 1)
-        return True
 
-    def char_up(self, ch):
-        resolved = self._char_to_keycode(ch)
-        if resolved is None:
-            return
-        code, needs_shift = resolved
+    def release_keystroke(self, stroke):
+        code, needs_shift = stroke
         self._emit_key(code, 0)
         if needs_shift:
             self._emit_key(e.KEY_LEFTSHIFT, 0)
+
+    def _caps_lock_on(self):
+        # The core X modifier state carries Lock while Caps Lock is engaged.
+        return bool(self._root.query_pointer().mask & X.LockMask)
 
     def _char_to_keycode(self, ch):
         """Return (evdev_code, needs_shift) for a character, or None."""

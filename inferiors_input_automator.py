@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-InFeRiOr's Input Automator v3.5.1 -- Linux port of the AutoHotkey v2 original.
+InFeRiOr's Input Automator v3.6.0 -- Linux port of the AutoHotkey v2 original
+(v3.5.1); the Linux-only changes since are listed under the deviations below.
 
 15 General + 15 Repeat (First) + 15 Repeat (Second) + 15 Repeat (Third)
 timers across four scrollable tabs. All settings adjustable in real time
@@ -44,6 +45,10 @@ Deliberate deviations from the AHK original (all agreed up front):
      interval. That forces different cursor-return schedules -- per click on
      General, per set on a Repeat tab (see run_general_timers()) -- but 0,0
      still resolves the same way on both, per deviation 5.
+  8. Quoted text is typed one paced character at a time, with Hold as the
+     per-character time, instead of all at once; a text row at Hold 0 types
+     nothing. Caps Lock is compensated so text types as written. See
+     type_text().
 Everything else -- timings, spacing, run semantics, Hold=0 behaviour, interval
 measurement -- matches the original exactly.
 """
@@ -436,7 +441,7 @@ class InputAutomator:
 
     def _build_gui(self):
         root = self.root
-        root.title("InFeRiOr's Input Automator v3.5.1")
+        root.title("InFeRiOr's Input Automator v3.6.0")
         root.geometry("%dx%d" % (WINDOW["width"], WINDOW["height"]))
         root.resizable(False, False)
         root.attributes("-topmost", True)          # AHK's +AlwaysOnTop
@@ -874,6 +879,39 @@ class InputAutomator:
         self.backend.mouse_up(click_btn)
         return True
 
+    def type_text(self, text, per_char_ms):
+        """Type `text` verbatim, one paced keystroke at a time.
+
+        DEVIATION (agreed): Hold is the per-character time. Each key is held
+        down for Hold ms, then there is a gap of Hold ms before the next one:
+
+            [Shift down] key down -- Hold -- key up [Shift up] -- Hold -- next
+
+        The original sent the whole string at once, which Windows buffers
+        safely. Here it arrived in ~1.5 ms, inside a single frame, so games
+        that read input once per frame (Sober/Roblox at 60 fps) missed letters,
+        and the row's Wait started long before the game had actually taken the
+        text in -- letting the next row's Enter cut the message off. Pacing
+        makes the typing take real time here, so Wait now starts only after
+        the last character has gone in.
+
+        Hold must be non-zero: at Hold 0 a text row types nothing, on every
+        tab. Returns False if a stop interrupted it; the key in flight and
+        Shift are always released first, so nothing is left held down.
+        """
+        if per_char_ms <= 0:
+            return True
+        for ch in text:
+            stroke = self.backend.char_keystroke(ch)
+            if stroke is None:
+                continue
+            self.backend.press_keystroke(stroke)
+            held = self.interruptible_sleep(per_char_ms)
+            self.backend.release_keystroke(stroke)
+            if not held or not self.interruptible_sleep(per_char_ms):
+                return False
+        return True
+
     def send_key_press(self, key_string, hold_duration):
         """Port of SendKeyPress.
 
@@ -881,23 +919,21 @@ class InputAutomator:
         AHK's Send("^{v down}") releases Ctrl the instant V goes down, so
         "hold Ctrl+V for 500ms" never actually held Ctrl.
         """
-        # Quoted literal -> type verbatim. Hold does not apply, as in AHK.
+        # Quoted literal -> type verbatim, paced by Hold (see type_text).
         if ib.is_quoted_literal(key_string):
-            self.backend.type_text(key_string[1:-1])
-            return True
+            return self.type_text(key_string[1:-1], hold_duration)
 
         # Special case: a literal "+" on its own. Resolved through the live
         # keyboard layout rather than assuming shift+=, so it stays correct on
         # non-US layouts.
         if key_string.strip() == "+":
-            if hold_duration > 0:
-                if not self.backend.char_down("+"):
-                    return True
-                ok = self.interruptible_sleep(hold_duration)
-                self.backend.char_up("+")
-                return ok
-            self.backend.type_text("+")
-            return True
+            stroke = self.backend.char_keystroke("+")
+            if stroke is None:
+                return True
+            self.backend.press_keystroke(stroke)
+            ok = self.interruptible_sleep(hold_duration)
+            self.backend.release_keystroke(stroke)
+            return ok
 
         keys = [k.strip() for k in key_string.split("+")]
         mods = [k for k in keys if k.lower() in ib.MODIFIER_NAMES]

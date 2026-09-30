@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-InFeRiOr's Input Automator v3.6.0 -- Linux port of the AutoHotkey v2 original
+InFeRiOr's Input Automator v3.7.0 -- Linux port of the AutoHotkey v2 original
 (v3.5.1); the Linux-only changes since are listed under the deviations below.
 
 15 General + 15 Repeat (First) + 15 Repeat (Second) + 15 Repeat (Third)
@@ -15,11 +15,11 @@ wherever the pointer already is.
 Layout constants below are copied verbatim from the AHK script so every timer
 control sits at its original coordinate. Two things differ:
 
-  * Width. The four tab labels render 432px wide at DejaVu Sans 9, so the tab
-    control is 432px and the window 452px, instead of 365/385. The tab strip
-    therefore ends flush with the notebook's right edge. Every control inside
-    the tabs keeps its original x/y.
-  * The bottom block (status line, START/RESET, footers) spans the full 432px
+  * Width. The four themed tab labels render 433px wide at Ubuntu 10, so the
+    tab control is 433px and the window 453px, instead of 365/385. The tab
+    strip therefore ends flush with the notebook's right edge. Every control
+    inside the tabs keeps its original x/y.
+  * The bottom block (status line, START/RESET, footers) spans the full 433px
     content width rather than the original 365px, so it stays balanced under
     the wider tab strip. Y coordinates and heights are unchanged.
 
@@ -49,6 +49,10 @@ Deliberate deviations from the AHK original (all agreed up front):
      per-character time, instead of all at once; a text row at Hold 0 types
      nothing. Caps Lock is compensated so text types as written. See
      type_text().
+  9. The window uses a fixed dark theme (Mint-Y-Dark greys, Ubuntu 10) with
+     rounded buttons, fields, dropdowns, tab tops and scrollbar thumb. The
+     original's blue/red/green text colours are kept, lightened to read on
+     dark grey. See PALETTE and _apply_theme().
 Everything else -- timings, spacing, run semantics, Hold=0 behaviour, interval
 measurement -- matches the original exactly.
 """
@@ -78,24 +82,26 @@ TOTAL_TIMERS = (TIMERS["numBasic"] + TIMERS["numRepeat1"]
                 + TIMERS["numRepeat2"] + TIMERS["numRepeat3"])
 NUM_TABS = 4
 
-# Window width widened 385 -> 452 purely so the tab strip fits; height and all
+# Window width widened 385 -> 453 purely so the tab strip fits; height and all
 # inner timer coordinates are unchanged.
 #
-# 452 is measured, not estimated: probing Notebook.index("@x,y") across an
-# over-wide notebook puts the four rendered tabs at x 0..431 at DejaVu Sans 9
-# (102 + 110 + 110 + 110), so the notebook is exactly 432px and the window
-# 10 + 432 + 10. Sizing the notebook to the tab strip is what makes the last
-# tab end flush with the window's right margin instead of leaving a gap.
-WINDOW = {"width": 452, "height": 707, "marginX": 10}
+# 453 is measured, not estimated: probing Notebook.index("@x,y") across an
+# over-wide notebook puts the four themed tabs (Ubuntu 10, TAB_PADDING) at
+# x 0..432, so the notebook is exactly 433px and the window 10 + 433 + 10.
+# Sizing the notebook to the tab strip is what makes the last tab end flush
+# with the window's right margin instead of leaving a gap. Each extra pixel of
+# tab padding adds 6px to the strip, so this is the flush fit closest to the
+# original 452.
+WINDOW = {"width": 453, "height": 707, "marginX": 10}
 # Full-width band used by the header, status line, buttons and footers.
-WINDOW["contentWidth"] = WINDOW["width"] - 2 * WINDOW["marginX"]   # 432
+WINDOW["contentWidth"] = WINDOW["width"] - 2 * WINDOW["marginX"]   # 433
 
 HEADER = {"y": 10, "height": 30}
 
 TAB_LAYOUT = {
     "x": 10,
     "y": 42,
-    "width": 432,        # was 365 in AHK; widened to fit the four tab labels
+    "width": 433,        # was 365 in AHK; widened to fit the four tab labels
                          # exactly, so the strip ends flush on the right
     "height": 500,
     "contentTop": 72,
@@ -151,11 +157,14 @@ BOTTOM_UI = {
     "footerLine1Y": 625, "footerLine1bY": 647, "footerLine2Y": 669,
 }
 
-# AHK's "s9" / "s10 bold" / "s12 bold" on DejaVu Sans, which measures slightly
-# narrower than Segoe UI at this display's 92 DPI, so every original box width
-# still fits its text.
-FONT_FAMILY = "DejaVu Sans"
-FONTS = {"default": 9, "status": 10, "btn": 12}
+# Ubuntu 10 is Mint's desktop font. It measures narrower than the DejaVu Sans 9
+# the AHK layout was first fitted to (AHK's "s9" / "s10 bold" / "s12 bold"), so
+# every fixed box still fits its text; the tab strip is the one exception and
+# is re-fitted in TAB_LAYOUT. DejaVu is the fallback where Ubuntu is missing.
+FONT_CHOICES = (
+    ("Ubuntu", {"default": 10, "status": 11, "btn": 13}),
+    ("DejaVu Sans", {"default": 9, "status": 10, "btn": 12}),
+)
 
 CLICK_TIMING = {
     "preDelay": 20,        # ms before mouse down
@@ -170,11 +179,41 @@ INVALID_KEY_TOOLTIP_TIMEOUT = 3000
 DEFAULTS = {"seconds": "0", "clickMs": "0", "waitMs": "0",
             "position": "0,0", "key": ""}
 
-# AHK colour names used in the original.
-COLORS = {"blue": "#0000FF", "red": "#FF0000", "green": "#008000",
-          "black": "#000000"}
-
 SCROLLBAR_W = 12
+
+# Fixed dark look: Mint-Y-Dark greys, with the original AHK text colours
+# (blue headers, red notes, green "Running") lightened just enough to read on
+# dark grey -- pure #0000FF blue would be 1.6:1 here. No accent colour: focus,
+# selection and the active tab are neutral greys/white.
+PALETTE = {
+    "bg": "#2e2e33",
+    "fg": "#e4e4e4",
+    "field_bg": "#2e2e33",
+    "field_fg": "#dadada",
+    "border": "#202023",
+    "focus_border": "#8a8a90",
+    "select_bg": "#4a4a52",
+    "select_fg": "#ffffff",
+    "button_bg": "#333338", "button_hover": "#3f3f46", "button_pressed": "#28282c",
+    "button_fg": "#e4e4e4",
+    "start_bg": "#4e9a2a", "start_hover": "#5aab33", "start_pressed": "#43862a",
+    "start_fg": "#ffffff",
+    "reset_bg": "#f04a50", "reset_hover": "#f2656a", "reset_pressed": "#d8434a",
+    "reset_fg": "#ffffff",
+    "tab_fg": "#868689", "tab_hover_bg": "#34343a",
+    "tab_active_bg": "#38383e", "tab_active_fg": "#ffffff",
+    "trough": "#2c2c30", "slider": "#717174", "slider_hover": "#858588",
+    "tooltip_bg": "#3f3f46", "tooltip_fg": "#ffffff",
+    "blue_text": "#5c9dff",    # section headers       (AHK: blue)
+    "red_text": "#ff5f5f",     # interval label, footer (AHK: red)
+    "green_text": "#4fd156",   # Status: Running        (AHK: green)
+}
+
+CORNER_RADIUS = 3   # Mint-Y's own radius
+
+# Horizontal/vertical padding inside each tab. The horizontal value is what
+# makes the four tabs span the notebook exactly -- see TAB_LAYOUT["width"].
+TAB_PADDING = (6, 4)
 
 
 def now_ms():
@@ -322,13 +361,70 @@ class ScrollTab:
         tk.Misc.lower(self.scrollbar)
 
 
+# ==================== ROUNDED SHAPES ====================
+# Generates the images behind every rounded control. Tk 8.6 photo images have
+# no partial transparency, so each edge pixel is blended onto the colour the
+# shape sits on (`outside`) -- exact here, because every control sits on a
+# known solid colour.
+
+def _rounded_image(master, fill, border, outside, radius, width=None,
+                   height=None, inset=(0, 0), top_only=False):
+    """A rounded rectangle with a 1px border, anti-aliased by 4x4 supersampling.
+
+    top_only rounds only the top corners and leaves the bottom edge open (for
+    tabs, which sit on the page below them). `inset` shrinks the shape inside
+    the image by (x, y) pixels, e.g. to float a scrollbar thumb in its trough.
+    """
+    w = width or 2 * (radius + 1) + 2
+    h = height or 2 * (radius + 1) + 2
+    ix, iy = inset
+
+    def rgb(c):
+        return tuple(int(c[i:i + 2], 16) for i in (1, 3, 5))
+
+    fill_c, border_c, out_c = rgb(fill), rgb(border), rgb(outside)
+
+    def inside(x, y, x0, y0, x1, y1, rad):
+        if x < x0 or x > x1 or y < y0 or y > y1:
+            return False
+        cx = min(max(x, x0 + rad), x1 - rad)
+        cy = max(y, y0 + rad) if top_only else min(max(y, y0 + rad), y1 - rad)
+        return (x - cx) ** 2 + (y - cy) ** 2 <= rad * rad
+
+    bottom = h + 1 if top_only else h - iy
+    samples = [(i + 0.5) / 4 for i in range(4)]
+    rows = []
+    for py in range(h):
+        row = []
+        for px in range(w):
+            outer = inner = 0
+            for sy in samples:
+                for sx in samples:
+                    x, y = px + sx, py + sy
+                    if inside(x, y, ix, iy, w - ix, bottom, radius):
+                        outer += 1
+                        if inside(x, y, ix + 1, iy + 1, w - ix - 1, bottom - 1,
+                                  max(radius - 1, 0)):
+                            inner += 1
+            a_out, a_in = outer / 16.0, inner / 16.0
+            c = [out_c[k] * (1 - a_out) + border_c[k] * (a_out - a_in)
+                 + fill_c[k] * a_in for k in range(3)]
+            row.append("#%02x%02x%02x" % tuple(int(round(v)) for v in c))
+        rows.append("{" + " ".join(row) + "}")
+    image = tk.PhotoImage(master=master, width=w, height=h)
+    image.put(" ".join(rows))
+    return image
+
+
 # ==================== TOOLTIP ====================
 # Port of AHK's ToolTip(): a small borderless window near the cursor that
 # disappears after a timeout.
 
 class Tooltip:
-    def __init__(self, root):
+    def __init__(self, root, palette, font):
         self.root = root
+        self.palette = palette
+        self.font = font
         self.window = None
         self.after_id = None
 
@@ -338,10 +434,10 @@ class Tooltip:
         self.window.wm_overrideredirect(True)
         self.window.attributes("-topmost", True)
         label = tk.Label(self.window, text=text, justify="left",
-                         background="#FFFFE1", foreground="#000000",
-                         relief="solid", borderwidth=1,
-                         font=(FONT_FAMILY, FONTS["default"]),
-                         padx=4, pady=2)
+                         background=self.palette["tooltip_bg"],
+                         foreground=self.palette["tooltip_fg"],
+                         relief="flat", borderwidth=0, font=self.font,
+                         padx=10, pady=6)
         label.pack()
         x = self.root.winfo_pointerx() + 12
         y = self.root.winfo_pointery() + 20
@@ -381,11 +477,14 @@ class InputAutomator:
         self.repeat_sets = [RepeatSet(), RepeatSet(), RepeatSet()]
         self.scroll_tabs = []
 
-        self.tooltip = Tooltip(root)
         self.picker = None
         self.picker_target = None
 
+        self.palette = PALETTE
+        self._images = []          # keeps generated theme images alive
         self._build_fonts()
+        self._apply_theme()
+        self.tooltip = Tooltip(root, self.palette, self.font_default)
         self._build_gui()
 
         self.hotkeys = ib.HotkeyListener(
@@ -397,19 +496,154 @@ class InputAutomator:
     # ---------- fonts ----------
 
     def _build_fonts(self):
-        self.font_default = tkfont.Font(family=FONT_FAMILY, size=FONTS["default"])
-        self.font_bold = tkfont.Font(family=FONT_FAMILY, size=FONTS["default"],
+        available = set(tkfont.families(self.root))
+        family, sizes = next(((f, z) for f, z in FONT_CHOICES if f in available),
+                             FONT_CHOICES[-1])
+        self.font_default = tkfont.Font(family=family, size=sizes["default"])
+        self.font_bold = tkfont.Font(family=family, size=sizes["default"],
                                      weight="bold")
-        self.font_status = tkfont.Font(family=FONT_FAMILY, size=FONTS["status"],
+        self.font_status = tkfont.Font(family=family, size=sizes["status"],
                                        weight="bold")
-        self.font_btn = tkfont.Font(family=FONT_FAMILY, size=FONTS["btn"],
+        self.font_btn = tkfont.Font(family=family, size=sizes["btn"],
                                     weight="bold")
+
+    # ---------- theme ----------
+
+    def _apply_theme(self):
+        """Paint Tk and ttk with PALETTE, using rounded image elements.
+
+        Tk cannot round a widget's corners, so each rounded part (button,
+        field, dropdown, tab top, scrollbar thumb) is a small generated image
+        that ttk stretches 9-slice style: the corners stay crisp at any size
+        and only the straight middle is stretched. "clam" is the base theme
+        because it honours colours on the elements that are not replaced.
+        """
+        p, root, r = self.palette, self.root, CORNER_RADIUS
+        root.configure(background=p["bg"])
+        style = ttk.Style(root)
+        style.theme_use("clam")
+        style.configure(".", background=p["bg"], foreground=p["fg"],
+                        fieldbackground=p["field_bg"], bordercolor=p["border"],
+                        lightcolor=p["bg"], darkcolor=p["bg"],
+                        troughcolor=p["trough"], arrowcolor=p["fg"],
+                        selectbackground=p["select_bg"],
+                        selectforeground=p["select_fg"],
+                        insertcolor=p["field_fg"], font=self.font_default)
+
+        def img(fill, border, **kw):
+            image = _rounded_image(root, fill=fill, border=border,
+                                   outside=kw.pop("outside", p["bg"]), **kw)
+            self._images.append(image)
+            return image
+
+        # Fields: entries and the dropdowns share one rounded field element,
+        # whose border lightens while it has keyboard focus.
+        field = img(p["field_bg"], p["border"], radius=r)
+        field_focus = img(p["field_bg"], p["focus_border"], radius=r)
+        style.element_create("Rounded.field", "image", field, ("focus", field_focus),
+                             border=r + 1, padding=(6, 1, 4, 1), sticky="nsew")
+        # Dropdowns get tighter inner padding: at 72px wide the Mode box has
+        # to fit "KeyPress" (54px at Ubuntu 10) beside its arrow.
+        style.element_create("RoundedCombo.field", "image", field, ("focus", field_focus),
+                             border=r + 1, padding=(4, 1, 1, 1), sticky="nsew")
+        style.layout("Rounded.TEntry", [
+            ("Rounded.field", {"sticky": "nswe", "children": [
+                ("Entry.padding", {"sticky": "nswe", "children": [
+                    ("Entry.textarea", {"sticky": "nswe"})]})]})])
+        style.configure("Rounded.TEntry", foreground=p["field_fg"], padding=0)
+        style.map("Rounded.TEntry", foreground=[("readonly", p["field_fg"])])
+
+        # The arrow lives inside the rounded field; its own box is painted in
+        # the field colour so only the arrow glyph shows.
+        style.layout("Rounded.TCombobox", [
+            ("RoundedCombo.field", {"sticky": "nswe", "children": [
+                ("Combobox.downarrow", {"side": "right", "sticky": "ns"}),
+                ("Combobox.padding", {"expand": "1", "sticky": "nswe", "children": [
+                    ("Combobox.textarea", {"sticky": "nswe"})]})]})])
+        style.configure("Rounded.TCombobox", foreground=p["field_fg"], padding=0,
+                        background=p["field_bg"], bordercolor=p["field_bg"],
+                        lightcolor=p["field_bg"], darkcolor=p["field_bg"],
+                        arrowcolor=p["fg"], arrowsize=9)
+        style.map("Rounded.TCombobox",
+                  foreground=[("readonly", p["field_fg"])],
+                  background=[("active", p["field_bg"]), ("pressed", p["field_bg"])],
+                  # A readonly combobox would otherwise paint its text as a
+                  # selection while focused.
+                  selectbackground=[("readonly", p["field_bg"])],
+                  selectforeground=[("readonly", p["field_fg"])])
+        # The dropdown list is a plain Tk Listbox that ttk does not style.
+        for opt, val in (("background", p["field_bg"]), ("foreground", p["field_fg"]),
+                         ("selectBackground", p["select_bg"]),
+                         ("selectForeground", p["select_fg"]),
+                         ("font", self.font_default), ("borderWidth", 0),
+                         ("relief", "flat")):
+            root.option_add("*TCombobox*Listbox." + opt, val)
+
+        # Buttons: one element per colour, each with hover and pressed images.
+        for kind in ("button", "start", "reset"):
+            name = "Rounded%s.border" % kind.capitalize()
+            edge = p["border"] if kind == "button" else None
+            style.element_create(
+                name, "image",
+                img(p[kind + "_bg"], edge or p[kind + "_bg"], radius=r),
+                ("pressed", img(p[kind + "_pressed"], edge or p[kind + "_pressed"], radius=r)),
+                ("active", img(p[kind + "_hover"], edge or p[kind + "_hover"], radius=r)),
+                border=r + 1, padding=(2, 1), sticky="nsew")
+            style_name = {"button": "Pos.TButton", "start": "Start.TButton",
+                          "reset": "Reset.TButton"}[kind]
+            style.layout(style_name, [
+                (name, {"sticky": "nswe", "children": [
+                    ("Button.padding", {"sticky": "nswe", "children": [
+                        ("Button.label", {"sticky": "nswe"})]})]})])
+            style.configure(style_name, foreground=p[kind + "_fg"], padding=0,
+                            anchor="center",
+                            font=self.font_default if kind == "button" else self.font_btn)
+            style.map(style_name, foreground=[("active", p[kind + "_fg"])])
+
+        # Tabs: rounded top corners only. Inactive tabs are just dim text on
+        # the window colour; the open tab is a lit, outlined shape. No expand
+        # on selection, so the strip keeps one width and stays flush.
+        style.element_create(
+            "Rounded.tab", "image",
+            img(p["bg"], p["bg"], radius=r, top_only=True),
+            ("selected", img(p["tab_active_bg"], p["border"], radius=r, top_only=True)),
+            ("active", img(p["tab_hover_bg"], p["tab_hover_bg"], radius=r, top_only=True)),
+            border=r + 1, padding=0, sticky="nsew")
+        style.layout("TNotebook.Tab", [
+            ("Rounded.tab", {"sticky": "nswe", "children": [
+                ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                    ("Notebook.label", {"side": "top", "sticky": ""})]})]})])
+        style.configure("TNotebook", background=p["bg"], bordercolor=p["border"],
+                        lightcolor=p["bg"], darkcolor=p["bg"], tabmargins=(0, 0, 0, 0))
+        style.configure("TNotebook.Tab", foreground=p["tab_fg"], padding=TAB_PADDING,
+                        font=self.font_default)
+        style.map("TNotebook.Tab",
+                  foreground=[("selected", p["tab_active_fg"]),
+                              ("active", p["fg"])],
+                  expand=[("selected", (0, 0, 0, 0))])
+
+        # Scrollbar: a pill-shaped thumb in a plain trough, no arrow buttons.
+        thumb_r = (SCROLLBAR_W - 4) // 2
+        pill = dict(radius=thumb_r, outside=p["trough"], width=SCROLLBAR_W,
+                    height=2 * thumb_r + 4, inset=(2, 1))
+        style.element_create(
+            "Rounded.thumb", "image", img(p["slider"], p["slider"], **pill),
+            ("pressed", img(p["slider_hover"], p["slider_hover"], **pill)),
+            ("active", img(p["slider_hover"], p["slider_hover"], **pill)),
+            border=(2, thumb_r + 1), sticky="nsew")
+        style.layout("Vertical.TScrollbar", [
+            ("Vertical.Scrollbar.trough", {"sticky": "ns", "children": [
+                ("Rounded.thumb", {"expand": "1", "sticky": "nswe"})]})])
+        style.configure("Vertical.TScrollbar", troughcolor=p["trough"],
+                        bordercolor=p["trough"], lightcolor=p["trough"],
+                        darkcolor=p["trough"])
 
     # ---------- widget helpers ----------
 
-    def _label(self, parent, x, y, w, text, color=COLORS["black"],
+    def _label(self, parent, x, y, w, text, color=None,
                bold=False, anchor="w"):
-        lbl = tk.Label(parent, text=text, foreground=color, anchor=anchor,
+        lbl = tk.Label(parent, text=text, anchor=anchor,
+                       foreground=color or self.palette["fg"],
                        font=self.font_bold if bold else self.font_default,
                        background=parent.cget("background"))
         lbl.place(x=x, y=y, width=w)
@@ -417,23 +651,32 @@ class InputAutomator:
 
     def _number_entry(self, parent, x, y, w, var):
         vcmd = (self.root.register(lambda p: p == "" or p.isdigit()), "%P")
-        ent = tk.Entry(parent, textvariable=var, font=self.font_default,
-                       validate="key", validatecommand=vcmd,
-                       relief="sunken", borderwidth=1)
+        ent = ttk.Entry(parent, textvariable=var, font=self.font_default,
+                        validate="key", validatecommand=vcmd,
+                        style="Rounded.TEntry")
         ent.place(x=x, y=y, width=w, height=21)
         return ent
 
     def _text_entry(self, parent, x, y, w, var, readonly=False):
-        ent = tk.Entry(parent, textvariable=var, font=self.font_default,
-                       relief="sunken", borderwidth=1)
+        ent = ttk.Entry(parent, textvariable=var, font=self.font_default,
+                        style="Rounded.TEntry")
         if readonly:
             ent.configure(state="readonly")
         ent.place(x=x, y=y, width=w, height=21)
         return ent
 
+    def _button(self, parent, text, command, kind="normal", font=None):
+        """Rounded button. kind: "normal", "start" or "reset". The font is
+        part of each button style, so `font` is accepted but unused."""
+        style = {"normal": "Pos.TButton", "start": "Start.TButton",
+                 "reset": "Reset.TButton"}[kind]
+        return ttk.Button(parent, text=text, command=command, style=style,
+                          cursor="hand2", takefocus=False)
+
     def _combo(self, parent, x, y, w, values, var):
         cb = ttk.Combobox(parent, values=values, textvariable=var,
-                          state="readonly", font=self.font_default)
+                          state="readonly", font=self.font_default,
+                          style="Rounded.TCombobox")
         cb.place(x=x, y=y, width=w, height=21)
         return cb
 
@@ -441,7 +684,7 @@ class InputAutomator:
 
     def _build_gui(self):
         root = self.root
-        root.title("InFeRiOr's Input Automator v3.6.0")
+        root.title("InFeRiOr's Input Automator v3.7.0")
         root.geometry("%dx%d" % (WINDOW["width"], WINDOW["height"]))
         root.resizable(False, False)
         root.attributes("-topmost", True)          # AHK's +AlwaysOnTop
@@ -453,14 +696,13 @@ class InputAutomator:
 
         # Tab control. Pages are left empty: exactly as in AHK, the scrolling
         # content lives on the window itself and is shown/hidden per tab.
-        style = ttk.Style()
-        style.configure("TNotebook.Tab", font=(FONT_FAMILY, FONTS["default"]))
         self.notebook = ttk.Notebook(root)
         self.notebook.place(x=TAB_LAYOUT["x"], y=TAB_LAYOUT["y"],
                             width=TAB_LAYOUT["width"], height=TAB_LAYOUT["height"])
         for title in ("General Timers", "Repeat Timers 1",
                       "Repeat Timers 2", "Repeat Timers 3"):
-            self.notebook.add(tk.Frame(self.notebook), text=title)
+            self.notebook.add(tk.Frame(self.notebook, background=self.palette["bg"]),
+                              text=title)
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         # Scroll viewports, placed at the original clip band.
@@ -493,21 +735,20 @@ class InputAutomator:
         # --- Bottom controls (outside the tabs) ---
         self.status_label = tk.Label(
             root, text="Status: Stopped", font=self.font_status,
-            foreground=COLORS["black"], anchor="center",
+            foreground=self.palette["fg"], anchor="center",
             background=root.cget("background"))
         self.status_label.place(x=WINDOW["marginX"], y=BOTTOM_UI["statusY"],
                                 width=WINDOW["contentWidth"],
                                 height=BOTTOM_UI["statusH"])
 
-        self.start_stop_btn = tk.Button(root, text="START (F6)",
-                                        font=self.font_btn,
-                                        command=self.toggle_script)
+        self.start_stop_btn = self._button(root, "START (F6)", self.toggle_script,
+                                           kind="start", font=self.font_btn)
         self.start_stop_btn.place(x=WINDOW["marginX"], y=BOTTOM_UI["btnY"],
                                   width=BOTTOM_UI["btnLeftW"],
                                   height=BOTTOM_UI["btnH"])
 
-        self.reset_btn = tk.Button(root, text="RESET", font=self.font_btn,
-                                   command=self.reset_all)
+        self.reset_btn = self._button(root, "RESET", self.reset_all,
+                                      kind="reset", font=self.font_btn)
         self.reset_btn.place(x=BOTTOM_UI["btnRightX"], y=BOTTOM_UI["btnY"],
                              width=BOTTOM_UI["btnRightW"], height=BOTTOM_UI["btnH"])
 
@@ -521,7 +762,7 @@ class InputAutomator:
                     WINDOW["contentWidth"],
                     "Each Repeat tab has its own interval. "
                     "Position 0,0 = click at cursor.",
-                    color=COLORS["red"], anchor="center")
+                    color=self.palette["red_text"], anchor="center")
 
         self._on_tab_changed()
 
@@ -538,7 +779,8 @@ class InputAutomator:
         # In-tab interval control (port of AddIntervalControl)
         self._label(parent, LAYOUT["sectionHeaderX"] - canvas_x,
                     content_y - canvas_y, INTERVAL_LAYOUT["labelW"],
-                    "Execution Interval (ms):", color=COLORS["red"], bold=True)
+                    "Execution Interval (ms):", color=self.palette["red_text"],
+                    bold=True)
         repeat_set.seconds_var = tk.StringVar(value=DEFAULTS["seconds"])
         self._number_entry(parent, LAYOUT["editLeft"] - canvas_x,
                            content_y - 3 - canvas_y, LAYOUT["editWidth"],
@@ -572,7 +814,7 @@ class InputAutomator:
             self._label(parent, LAYOUT["sectionHeaderX"] - cx, content_y - cy,
                         MODE_DDL["x"] - LAYOUT["sectionHeaderX"] - 5,
                         "═══ Timer %d (%s) ═══" % (i, timer_type),
-                        color=COLORS["blue"])
+                        color=self.palette["blue_text"])
 
             key_row_y = content_y + spacing["afterHeader"]
             self._add_mode_and_key_controls(parent, content_y, key_row_y, t)
@@ -654,9 +896,8 @@ class InputAutomator:
                                       t.pos_var, readonly=True)
         t.pos_var.trace_add("write", t.refresh_cache)
 
-        t.pos_button = tk.Button(
-            parent, text=POS_BTN["getText"], font=self.font_default,
-            command=lambda _t=t: self.toggle_position(_t))
+        t.pos_button = self._button(parent, POS_BTN["getText"],
+                                    lambda _t=t: self.toggle_position(_t))
         # One trace keeps the button label honest no matter what moved the
         # field: a capture, a Clear, or the global RESET.
         t.pos_var.trace_add("write", lambda *_a, _t=t: self._sync_pos_button(_t))
@@ -805,7 +1046,7 @@ class InputAutomator:
             self.backend.release_all()
             self.start_stop_btn.configure(text="START (F6)")
             self.status_label.configure(text="Status: Stopped",
-                                        foreground=COLORS["black"])
+                                        foreground=self.palette["fg"])
         else:
             if not self._validate_all_key_timers():
                 return
@@ -815,7 +1056,7 @@ class InputAutomator:
             self.last_repeat_run = [start, start, start]
             self.start_stop_btn.configure(text="STOP (F6)")
             self.status_label.configure(text="Status: Running",
-                                        foreground=COLORS["green"])
+                                        foreground=self.palette["green_text"])
             self.worker = threading.Thread(target=self._main_loop, daemon=True)
             self.worker.start()
 
